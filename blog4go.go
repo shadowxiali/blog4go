@@ -136,7 +136,7 @@ func NewWriterFromConfigAsFile(configFile string) (err error) {
 	}
 
 	multiWriter.closed = false
-	multiWriter.writers = make(map[LevelType]Writer)
+	multiWriter.writers = make(map[LevelType]SubWriter)
 
 	for _, filter := range config.Filters {
 		var rotate = false
@@ -144,17 +144,39 @@ func NewWriterFromConfigAsFile(configFile string) (err error) {
 		var isSocket = false
 		var isConsole = false
 
+		var f *os.File
+		var blog *BLog
+		var fileLock *sync.RWMutex
+
 		// get file path
 		var filePath string
 		if (file{}) != filter.File {
 			// file do not need logrotate
 			filePath = filter.File.Path
 			rotate = false
+
+			f, err = os.OpenFile(filePath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0644))
+			if nil != err {
+				return err
+			}
+			blog = NewBLog(f)
+			fileLock = new(sync.RWMutex)
 		} else if (rotateFile{}) != filter.RotateFile {
 			// file need logrotate
 			filePath = filter.RotateFile.Path
 			rotate = true
 			timeRotate = TypeTimeBaseRotate == filter.RotateFile.Type
+
+			fileName := filePath
+			if timeRotate {
+				fileName = fmt.Sprintf("%s.%s", fileName, timeCache.Date())
+			}
+			f, err = os.OpenFile(fileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0644))
+			if nil != err {
+				return err
+			}
+			blog = NewBLog(f)
+			fileLock = new(sync.RWMutex)
 		} else if (socket{}) != filter.Socket {
 			isSocket = true
 		} else {
@@ -162,35 +184,23 @@ func NewWriterFromConfigAsFile(configFile string) (err error) {
 			isConsole = true
 		}
 
-		levels := strings.Split(filter.Levels, ",")
-		for _, levelStr := range levels {
-			var level LevelType
-			if level = LevelFromString(levelStr); !level.valid() {
-				return ErrInvalidLevel
+		// 同一个filter下，所有level共用同一个writer
+		var writerSingle Writer
+		if isConsole {
+			// console writer
+			writer, err := newConsoleWriter(filter.Console.Redirect)
+			if nil != err {
+				return err
 			}
-
-			if isConsole {
-				// console writer
-				writer, err := newConsoleWriter(filter.Console.Redirect)
-				if nil != err {
-					return err
-				}
-
-				multiWriter.writers[level] = writer
-				continue
+			writerSingle = writer
+		} else if isSocket {
+			// socket writer
+			writer, err := newSocketWriter(filter.Socket.Network, filter.Socket.Address)
+			if nil != err {
+				return err
 			}
-
-			if isSocket {
-				// socket writer
-				writer, err := newSocketWriter(filter.Socket.Network, filter.Socket.Address)
-				if nil != err {
-					return err
-				}
-
-				multiWriter.writers[level] = writer
-				continue
-			}
-
+			writerSingle = writer
+		} else {
 			// init a base file writer
 			writer, err := newBaseFileWriter(filePath, timeRotate)
 			if nil != err {
@@ -211,9 +221,23 @@ func NewWriterFromConfigAsFile(configFile string) (err error) {
 				}
 			}
 
+			writer.file = f
+			writer.blog = blog
+			writer.lock = fileLock
+
+			writerSingle = writer
+		}
+
+		levels := strings.Split(filter.Levels, ",")
+		for _, levelStr := range levels {
+			var level LevelType
+			if level = LevelFromString(levelStr); !level.valid() {
+				return ErrInvalidLevel
+			}
+
 			// set color
 			multiWriter.SetColored(filter.Colored)
-			multiWriter.writers[level] = writer
+			multiWriter.AppendWriter(level, writerSingle)
 		}
 	}
 

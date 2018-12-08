@@ -17,12 +17,16 @@ var (
 	ErrInvalidRotateType = errors.New("Invalid log rotate type")
 )
 
+// 每个类型可以有多个Writer，这样就可以同时在文件和console上显示了
+type SubWriter []Writer
+
 // MultiWriter struct defines an instance for multi writers with different message level
 type MultiWriter struct {
 	level LevelType
 
 	// file writers
-	writers map[LevelType]Writer
+	// 每个类型可以有多个Writer，这样就可以同时在文件和console上显示了
+	writers map[LevelType]SubWriter
 
 	colored bool
 
@@ -49,6 +53,15 @@ type MultiWriter struct {
 	lock *sync.RWMutex
 }
 
+func (writer *MultiWriter) AppendWriter(level LevelType, w Writer) {
+	if subW, ok := writer.writers[level]; ok {
+		writer.writers[level] = append(subW, w)
+	} else {
+		subW := make(SubWriter, 0)
+		writer.writers[level] = append(subW, w)
+	}
+}
+
 // TimeRotated get timeRotated
 func (writer *MultiWriter) TimeRotated() bool {
 	return writer.timeRotated
@@ -57,8 +70,10 @@ func (writer *MultiWriter) TimeRotated() bool {
 // SetTimeRotated toggle time base logrotate
 func (writer *MultiWriter) SetTimeRotated(timeRotated bool) {
 	writer.timeRotated = timeRotated
-	for _, fileWriter := range writer.writers {
-		fileWriter.SetTimeRotated(timeRotated)
+	for _, subFileWriter := range writer.writers {
+		for _, fileWriter := range subFileWriter {
+			fileWriter.SetTimeRotated(timeRotated)
+		}
 	}
 }
 
@@ -74,8 +89,10 @@ func (writer *MultiWriter) SetRetentions(retentions int64) {
 	}
 
 	writer.retentions = retentions
-	for _, fileWriter := range writer.writers {
-		fileWriter.SetRetentions(retentions)
+	for _, subFileWriter := range writer.writers {
+		for _, fileWriter := range subFileWriter {
+			fileWriter.SetRetentions(retentions)
+		}
 	}
 }
 
@@ -87,8 +104,10 @@ func (writer *MultiWriter) RotateSize() int64 {
 // SetRotateSize set size when logroatate
 func (writer *MultiWriter) SetRotateSize(rotateSize int64) {
 	writer.rotateSize = rotateSize
-	for _, fileWriter := range writer.writers {
-		fileWriter.SetRotateSize(rotateSize)
+	for _, subFileWriter := range writer.writers {
+		for _, fileWriter := range subFileWriter {
+			fileWriter.SetRotateSize(rotateSize)
+		}
 	}
 }
 
@@ -100,8 +119,10 @@ func (writer *MultiWriter) RotateLines() int {
 // SetRotateLines set line number when logrotate
 func (writer *MultiWriter) SetRotateLines(rotateLines int) {
 	writer.rotateLines = rotateLines
-	for _, fileWriter := range writer.writers {
-		fileWriter.SetRotateLines(rotateLines)
+	for _, subFileWriter := range writer.writers {
+		for _, fileWriter := range subFileWriter {
+			fileWriter.SetRotateLines(rotateLines)
+		}
 	}
 }
 
@@ -113,8 +134,10 @@ func (writer *MultiWriter) Colored() bool {
 // SetColored set logging color
 func (writer *MultiWriter) SetColored(colored bool) {
 	writer.colored = colored
-	for _, fileWriter := range writer.writers {
-		fileWriter.SetColored(colored)
+	for _, subFileWriter := range writer.writers {
+		for _, fileWriter := range subFileWriter {
+			fileWriter.SetColored(colored)
+		}
 	}
 }
 
@@ -136,8 +159,10 @@ func (writer *MultiWriter) SetHookLevel(level LevelType) {
 // SetLevel set logging level threshold
 func (writer *MultiWriter) SetLevel(level LevelType) {
 	writer.level = level
-	for _, fileWriter := range writer.writers {
-		fileWriter.SetLevel(level)
+	for _, subFileWriter := range writer.writers {
+		for _, fileWriter := range subFileWriter {
+			fileWriter.SetLevel(level)
+		}
 	}
 }
 
@@ -154,8 +179,10 @@ func (writer *MultiWriter) SetTags(tags map[string]string) {
 	defer writer.lock.Unlock()
 	writer.tags = tags
 
-	for _, singleWriter := range writer.writers {
-		singleWriter.SetTags(tags)
+	for _, subs := range writer.writers {
+		for _, singleWriter := range subs {
+			singleWriter.SetTags(tags)
+		}
 	}
 }
 
@@ -169,8 +196,10 @@ func (writer *MultiWriter) Close() {
 	writer.lock.Lock()
 	defer writer.lock.Unlock()
 
-	for _, fileWriter := range writer.writers {
-		fileWriter.Close()
+	for _, subFileWriter := range writer.writers {
+		for _, fileWriter := range subFileWriter {
+			fileWriter.Close()
+		}
 	}
 	writer.closed = true
 }
@@ -197,7 +226,9 @@ func (writer *MultiWriter) write(level LevelType, args ...interface{}) {
 		}
 	}()
 
-	writer.writers[level].write(level, args...)
+	for _, fileWriter := range writer.writers[level] {
+		fileWriter.write(level, args...)
+	}
 }
 
 func (writer *MultiWriter) writef(level LevelType, format string, args ...interface{}) {
@@ -223,13 +254,17 @@ func (writer *MultiWriter) writef(level LevelType, format string, args ...interf
 		}
 	}()
 
-	writer.writers[level].writef(level, format, args...)
+	for _, fileWriter := range writer.writers[level] {
+		fileWriter.writef(level, format, args...)
+	}
 }
 
 // flush flush logs to disk
 func (writer *MultiWriter) flush() {
-	for _, writer := range writer.writers {
-		writer.flush()
+	for _, subFileWriter := range writer.writers {
+		for _, fileWriter := range subFileWriter {
+			fileWriter.flush()
+		}
 	}
 }
 

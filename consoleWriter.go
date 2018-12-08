@@ -326,6 +326,9 @@ func (writer *ConsoleWriter) SetRotateLines(rotateLines int) {
 // flush buffer to disk
 func (writer *ConsoleWriter) flush() {
 	writer.blog.flush()
+	if nil != writer.errblog {
+		writer.errblog.flush()
+	}
 }
 
 // Trace trace

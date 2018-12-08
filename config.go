@@ -63,7 +63,7 @@ type rotateFile struct {
 
 type console struct {
 	// redirect stderr to stdout
-	Redirect bool `xml:"redirect"`
+	Redirect bool `xml:"redirect,attr"`
 }
 
 type socket struct {
